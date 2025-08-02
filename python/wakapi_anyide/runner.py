@@ -2,6 +2,8 @@ import asyncio
 import base64
 import logging
 import time
+import sqlite3
+import json
 from asyncio import CancelledError
 from asyncio import Future
 from asyncio import Queue
@@ -22,10 +24,21 @@ from wakapi_anyide.watchers.types import Watcher
 
 logger = logging.getLogger(__name__)
 
+# i think this will make it in the folder u are running it but who caressss,
+# just add that file to .gitignore and nobody will die
+con = sqlite3.connect("heartbeats.db")
+cur = con.cursor()
+
+# im too lazy to use migrations, and too lazy to convert the data to sqlite so ill just dump it in the blob
+cur.execute("""
+CREATE TABLE IF NOT EXISTS heartbeats (
+    data BLOB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)
+""")
 
 class ConfigInvalidatedException(Exception):
     pass
-    
 
 async def heartbeat_task(env: Environment, queue: Queue[Event], watchers: Sequence[Watcher], should_shutdown: asyncio.Event):
     next_heartbeat_due = time.time() + env.config.settings.heartbeat_rate_limit_seconds
@@ -101,7 +114,7 @@ async def heartbeat_task(env: Environment, queue: Queue[Event], watchers: Sequen
         response: ClientResponse
         last_text: str | None = None
 
-        if env.is_test_only:
+        if False: # env.is_test_only:
             logger.info(f"Would've sent heartbeat, but in testing mode")
             continue
 
@@ -116,7 +129,15 @@ async def heartbeat_task(env: Environment, queue: Queue[Event], watchers: Sequen
                 else:
                     last_text = await response.text()
         else:
-            raise Exception(f"Failed to send heartbeat: {response.status} {last_text}")
+            for heartbeat in heartbeats:
+                try:
+                    cur.execute("INSERT INTO heartbeats (data) VALUES (?)", (json.dumps(heartbeat).encode(),))
+                    con.commit()
+                except sqlite3.Error as e:
+                    logger.error(f"Failed to save heartbeat to database: {e}")
+                    continue
+
+            logger.error(f"Failed to send heartbeat: {response.status} {last_text}")
 
 
 def language_processor(env: Environment, file_extension: str) -> str:

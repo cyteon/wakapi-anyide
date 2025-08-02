@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import sqlite3
+import json
+import requests
 from json import dumps
 from pathlib import Path
 from typing import Annotated
@@ -79,7 +82,7 @@ def start(is_test, is_polling):
     asyncio.run(run(Environment(
         is_test_only=is_test,
         polling_mode=is_polling,
-        config=WakatimeConfig(),  # type: ignore
+        config=WakatimeConfig(),   # type: ignore
         project=Project()  # type: ignore
     )))
 
@@ -93,7 +96,53 @@ def test(verbose: Verbose = False, polling: Polling = False):
 def track(verbose: Verbose = False, polling: Polling = False):
     start(False, polling)
 
+@app.command()
+def send_failed_heartbeats(verbose: Verbose = False, polling: Polling = False):
+    import base64
+    import requests
+    
+    config = WakatimeConfig()
 
+    con = sqlite3.connect("heartbeats.db")
+    cur = con.cursor()
+
+    heartbeats = cur.execute("SELECT data FROM heartbeats").fetchall()
+
+    if not heartbeats:
+        logger.info("No failed heartbeats found")
+        return
+    
+    logger.info(f"Found {len(heartbeats)} failed heartbeats, sending them...")
+
+    # Create user agent string
+    user_agent = f"wakapi-anyide/{__version__}"
+
+    try:
+        data = [
+            json.loads(heartbeat[0]) for heartbeat in heartbeats
+        ]
+        
+        response = requests.post(
+            f"{config.settings.api_url}/users/current/heartbeats.bulk",
+            json=data,
+            headers={
+                "User-Agent": user_agent,
+                "Authorization": f"Basic {base64.b64encode(config.settings.api_key.encode()).decode()}"
+            }
+        )
+        
+        if response.status_code == 201:
+            logger.info("Successfully sent heartbeat")
+            cur.execute("DELETE FROM heartbeats")
+            con.commit()
+        else:
+            last_text = response.text
+            logger.error(f"Failed to send heartbeat: {response.status_code} - {last_text}")
+    except Exception as e:
+        logger.error(f"Failed to decode heartbeat: {e}")
+    
+    con.close()
+    
 @app.command()
 def version():
     print(f"wakapi-anyide v{__version__}")

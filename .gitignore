@@ -17,3 +17,7 @@ __pycache__
 # Ruff
 
 .ruff_cache
+
+# heartbeats db
+heartbeats.db
+heartbeats.db-journal
