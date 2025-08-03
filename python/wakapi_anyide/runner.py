@@ -120,14 +120,27 @@ async def heartbeat_task(env: Environment, queue: Queue[Event], watchers: Sequen
 
         for i in range(3):
             logger.info(f"Sending heartbeat (attempt {i+1})")
-            async with request("POST", f"{env.config.settings.api_url}/users/current/heartbeats.bulk", json=heartbeats, headers={
-                "User-Agent": user_agent,
-                "Authorization": f"Basic {base64.b64encode(env.config.settings.api_key.encode()).decode()}"
-            }) as response:
-                if response.status == 201:
-                    break
-                else:
-                    last_text = await response.text()
+            try:
+                async with request("POST", f"{env.config.settings.api_url}/users/current/heartbeats.bulk", json=heartbeats, headers={
+                    "User-Agent": user_agent,
+                    "Authorization": f"Basic {base64.b64encode(env.config.settings.api_key.encode()).decode()}"
+                }) as response:
+                    if response.status == 201:
+                        break
+                    else:
+                        last_text = await response.text()
+            except Exception as e:
+                logger.error(f"Heartbeat failed due to {e}")
+
+                for heartbeat in heartbeats:
+                    try:
+                        cur.execute("INSERT INTO heartbeats (data) VALUES (?)", (json.dumps(heartbeat).encode(),))
+                        con.commit()
+                    except sqlite3.Error as e:
+                        logger.error(f"Failed to save heartbeat to database: {e}")
+                        continue
+
+                break
         else:
             for heartbeat in heartbeats:
                 try:
